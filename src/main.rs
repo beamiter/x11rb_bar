@@ -12,7 +12,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 use xbar_core::{
     AppState, BarConfig, Color, ShapeStyle, ThemeMode, arm_second_timer, colors_for_theme,
-    draw_bar, initialize_logging, spawn_shared_eventfd_notifier,
+    initialize_logging, spawn_shared_eventfd_notifier,
 };
 
 use libc;
@@ -276,7 +276,17 @@ fn redraw(
     cfg: &BarConfig,
 ) -> Result<()> {
     let cr = back.ensure_surface(cairo_xcb)?;
-    draw_bar(cr, width, height, colors, state, font, cfg)?;
+
+    // Use dirty bits to conditionally redraw
+    // If dirty_fields is empty, skip redraw entirely
+    if !state.dirty_fields.is_empty() {
+        // Pass dirty bits to draw_bar_with_dirty for future selective redraw support
+        xbar_core::draw_bar_with_dirty(cr, width, height, colors, state, font, cfg, Some(state.dirty_fields))?;
+
+        // Clear dirty bits after successful redraw
+        state.dirty_fields = xbar_core::DirtyBits::new(0);
+    }
+
     back.flush();
     back.blit_to_window(conn, win, gc)?;
     conn.flush()?;
@@ -634,15 +644,32 @@ fn main() -> Result<()> {
     let mut events: [libc::epoll_event; EP_EVENTS_CAP] =
         unsafe { MaybeUninit::zeroed().assume_init() };
 
-    let periodic_tick = |state: &mut AppState| -> Result<bool> {
-        // timerfd fires every second, so always redraw the clock
-        let mut need_redraw = true;
+    // Track the last second to avoid redrawing when time hasn't actually changed
+    let mut last_drawn_second: Option<u32> = None;
+
+    let periodic_tick = |state: &mut AppState, last_second: &mut Option<u32>| -> Result<bool> {
+        // Get current second (0-59)
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as u32;
+        let current_second = now % 60;
+
+        // Only redraw if second actually changed
+        let mut need_redraw = false;
+        if *last_second != Some(current_second) {
+            *last_second = Some(current_second);
+            need_redraw = true;
+        }
+
+        // System monitor update every 2 seconds (still needed regardless of time display)
         if state.last_monitor_update.elapsed() >= Duration::from_secs(2) {
             state.system_monitor.update_if_needed();
             state.audio_manager.update_if_needed();
             state.last_monitor_update = Instant::now();
             need_redraw = true;
         }
+
         Ok(need_redraw)
     };
 
@@ -695,7 +722,7 @@ fn main() -> Result<()> {
                             libc::read(tfd, buf.as_mut_ptr() as *mut libc::c_void, buf.len())
                         };
                         if r == 8 {
-                            if periodic_tick(&mut state)? {
+                            if periodic_tick(&mut state, &mut last_drawn_second)? {
                                 redraw(
                                     &cairo_xcb,
                                     &conn,
