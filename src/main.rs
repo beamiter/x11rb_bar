@@ -468,7 +468,7 @@ fn drain_x_events(
 fn main() -> Result<()> {
     // 参数
     let args: Vec<String> = env::args().collect();
-    let shared_path = args.get(1).cloned().unwrap_or_default();
+    let shared_path = args.iter().skip(1).last().cloned().unwrap_or_default();
 
     // 日志
     if let Err(e) = initialize_logging("x11rb_bar", &shared_path) {
