@@ -1,8 +1,7 @@
 use anyhow::Result;
 use cairo::ffi::{xcb_connection_t, xcb_visualtype_t};
-use cairo::{Context, XCBConnection as CairoXCBConnection, XCBDrawable, XCBSurface, XCBVisualType};
+use cairo::{XCBConnection as CairoXCBConnection, XCBDrawable, XCBSurface, XCBVisualType};
 use log::{debug, warn};
-use pango::FontDescription;
 use shared_structures::SharedRingBuffer;
 use std::env;
 use std::mem::MaybeUninit;
@@ -11,8 +10,11 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 use xbar_core::{
-    AppState, BarConfig, Color, ShapeStyle, ThemeMode, arm_second_timer, colors_for_theme,
-    initialize_logging, spawn_shared_eventfd_notifier,
+    AppState, BarConfig, Color, ShapeStyle, ThemeMode, arm_second_timer,
+    cairo::{self, Context, Format, ImageSurface},
+    colors_for_theme, initialize_logging,
+    pango::FontDescription,
+    spawn_shared_eventfd_notifier,
 };
 
 use libc;
@@ -281,7 +283,16 @@ fn redraw(
     // If dirty_fields is empty, skip redraw entirely
     if !state.dirty_fields.is_empty() {
         // Pass dirty bits to draw_bar_with_dirty for future selective redraw support
-        xbar_core::draw_bar_with_dirty(cr, width, height, colors, state, font, cfg, Some(state.dirty_fields))?;
+        xbar_core::draw_bar_with_dirty(
+            cr,
+            width,
+            height,
+            colors,
+            state,
+            font,
+            cfg,
+            Some(state.dirty_fields),
+        )?;
 
         // Clear dirty bits after successful redraw
         state.dirty_fields = xbar_core::DirtyBits::new(0);
